@@ -96,6 +96,8 @@ resource "aws_cloudwatch_dashboard" "principal" {
         height = 6
         properties = {
           title = "Solicitudes totales CloudFront"
+          # CloudFront publica estas metricas en CloudWatch us-east-1.
+          region = "us-east-1"
           metrics = [["AWS/CloudFront", "Requests", "DistributionId",
           aws_cloudfront_distribution.cdn.id, "Region", "Global"]]
           period = 300
@@ -110,7 +112,8 @@ resource "aws_cloudwatch_dashboard" "principal" {
         width  = 12
         height = 6
         properties = {
-          title = "Tasa de errores 4xx y 5xx"
+          title  = "Tasa de errores 4xx y 5xx"
+          region = "us-east-1"
           metrics = [
             ["AWS/CloudFront", "4xxErrorRate", "DistributionId",
             aws_cloudfront_distribution.cdn.id, "Region", "Global"],
