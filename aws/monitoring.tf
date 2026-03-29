@@ -95,9 +95,9 @@ resource "aws_cloudwatch_dashboard" "principal" {
         width  = 12
         height = 6
         properties = {
-          title   = "Solicitudes totales CloudFront"
+          title = "Solicitudes totales CloudFront"
           metrics = [["AWS/CloudFront", "Requests", "DistributionId",
-            aws_cloudfront_distribution.cdn.id, "Region", "Global"]]
+          aws_cloudfront_distribution.cdn.id, "Region", "Global"]]
           period = 300
           stat   = "Sum"
           view   = "timeSeries"

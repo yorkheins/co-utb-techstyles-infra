@@ -1,0 +1,164 @@
+name: Terraform AWS Infra
+
+on:
+  pull_request:
+    paths:
+      - "aws/**"
+      - ".github/workflows/terraform-aws.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "aws/**"
+      - ".github/workflows/terraform-aws.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Operacion a ejecutar"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-aws-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TERRAFORM_VERSION: 1.14.8
+  TF_WORKING_DIR: aws
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_aws_region: ${{ vars.TF_VAR_AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_bucket_name: ${{ vars.TF_VAR_BUCKET_NAME }}
+  TF_VAR_alert_email: ${{ vars.TF_VAR_ALERT_EMAIL }}
+
+jobs:
+  validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init without backend
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+  plan:
+    name: Terraform Plan
+    needs: validate
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false) ||
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: gha-terraform-plan
+
+      - name: Terraform init with remote backend
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Publish plan summary
+        run: |
+          terraform show -no-color tfplan > tfplan.txt
+
+          {
+            echo "## Terraform plan"
+            echo
+            echo '```'
+            sed -n '1,200p' tfplan.txt
+            if [ "$(wc -l < tfplan.txt)" -gt 200 ]; then
+              echo
+              echo "... salida truncada ..."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Terraform Apply
+    needs: validate
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: gha-terraform-apply
+
+      - name: Terraform init with remote backend
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Publish outputs summary
+        run: |
+          {
+            echo "## Terraform outputs"
+            echo
+            echo '```'
+            terraform output -no-color
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
